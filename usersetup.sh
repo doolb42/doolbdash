@@ -1,14 +1,10 @@
 #!/bin/bash
 # tucCANeer / doolbdash user setup script
 # Arch Linux ARM — Raspberry Pi 4B
-# Run as your regular user after setup.sh has completed
+# Run as your regular user after rootsetup.sh has completed
 set -e
 
-# ---------------------------------------------------------------
-# Configuration — must match setup.sh
-# ---------------------------------------------------------------
 USERNAME="doolb"
-# ---------------------------------------------------------------
 
 echo "==> Installing yay"
 cd /tmp
@@ -20,10 +16,13 @@ rm -rf /tmp/yay
 
 echo "==> Installing AUR packages"
 yay -S --noconfirm \
-    python-can \
-    python-cantools \
-    python-gpiozero \
+    can-utils \
+    pigpio \
     ttf-jetbrains-mono-nerd
+
+echo "==> Enabling pigpiod"
+sudo systemctl enable pigpiod
+sudo systemctl start pigpiod
 
 echo "==> Verifying Python dependencies"
 python -c "import can; import cantools; import gpiozero; import redis; print('All Python imports OK')"
@@ -107,11 +106,6 @@ bindsym $mod+Shift+Tab workspace prev
 
 # Polybar
 exec_always --no-startup-id ~/.config/polybar/launch.sh
-
-# Auto-assign widgets to workspaces (to be populated once widgets are written)
-# assign [class="Powertrain"] $ws1
-# assign [class="Journey"] $ws2
-# assign [class="SystemStatus"] $ws3
 EOF
 
 echo "==> Writing polybar config"
@@ -180,7 +174,7 @@ format-foreground = ${colors.accent}
 
 [module/redis-status]
 type             = custom/script
-exec             = redis-cli ping 2>/dev/null | grep -q "PONG" && echo " Redis OK" || echo " Redis DOWN"
+exec             = valkey-cli ping 2>/dev/null | grep -q "PONG" && echo " Redis OK" || echo " Redis DOWN"
 interval         = 5
 label            = %output%
 EOF
@@ -225,7 +219,7 @@ element selected {
 }
 EOF
 
-echo "==> Writing xterm config (fallback terminal)"
+echo "==> Writing xterm config"
 cat > ~/.Xresources << 'EOF'
 XTerm*faceName:     JetBrainsMono Nerd Font
 XTerm*faceSize:     11
@@ -233,30 +227,6 @@ XTerm*background:   #1e1e2e
 XTerm*foreground:   #cdd6f4
 XTerm*cursorColor:  #89b4fa
 XTerm*selectToClipboard: true
-EOF
-
-echo "==> Writing .bash_profile to auto-start i3 on login on tty1"
-cat > ~/.bash_profile << 'EOF'
-[[ -f ~/.bashrc ]] && source ~/.bashrc
-[[ -z $DISPLAY && $XDG_VTNR -eq 1 ]] && exec startx
-EOF
-
-echo "==> Writing .bashrc"
-cat > ~/.bashrc << 'EOF'
-# Prompt
-PS1='\[\e[34m\]\u@\h\[\e[0m\]:\[\e[36m\]\w\[\e[0m\]\$ '
-
-# Aliases
-alias ls='ls --color=auto'
-alias ll='ls -lah --color=auto'
-alias gs='git status'
-alias gd='git diff'
-
-# can-utils shortcuts
-alias canup='sudo ip link set can0 up type can bitrate 500000'
-alias candown='sudo ip link set can0 down'
-alias canlisten='candump can0'
-alias canlog='candump -l can0'
 EOF
 
 echo "==> Writing placeholder tucCANeer startup config"
@@ -274,7 +244,7 @@ regen_level = 1
 drive_mode = "normal"
 EOF
 
-echo "==> Writing placeholder tucCANeer systemd service files"
+echo "==> Writing tucCANeer systemd service files"
 cat > ~/tuccaneer/systemd/tuccaneer-reader.service << 'EOF'
 [Unit]
 Description=tucCANeer CAN Reader

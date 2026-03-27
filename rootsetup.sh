@@ -23,18 +23,25 @@ EOF
 
 echo "==> Setting timezone"
 ln -sf /usr/share/zoneinfo/$TIMEZONE /etc/localtime
-hwclock --systohc
+hwclock --systohc 2>/dev/null || true
 
 echo "==> Setting locale"
 sed -i "s/#${LOCALE} UTF-8/${LOCALE} UTF-8/" /etc/locale.gen
 locale-gen
 echo "LANG=${LOCALE}" > /etc/locale.conf
 
-echo "==> Updating system"
-pacman -Syu --noconfirm
+echo "==> Initialising pacman keyring"
+pacman-key --init
+pacman-key --populate archlinuxarm
+
+echo "==> Downloading all updates"
+pacman -Syw --noconfirm
+
+echo "==> Installing updates from cache"
+pacman -Su --noconfirm
 
 echo "==> Installing base packages"
-pacman -S --noconfirm \
+pacman -S --noconfirm --needed \
     base-devel \
     git \
     vim \
@@ -43,15 +50,16 @@ pacman -S --noconfirm \
     python-pip \
     python-redis \
     python-gobject \
-    redis \
-    can-utils
+    valkey
 
 echo "==> Installing display stack"
-pacman -S --noconfirm \
+pacman -S --noconfirm --needed \
     xorg-server \
     xorg-xinit \
     xorg-xrandr \
     xorg-xset \
+    xorg-xsetroot \
+    xterm \
     i3-wm \
     i3status \
     rofi \
@@ -59,17 +67,17 @@ pacman -S --noconfirm \
     ttf-dejavu \
     ttf-liberation
 
-echo "==> Installing GPIO dependencies"
-pacman -S --noconfirm \
-    pigpio
+echo "==> Installing Python packages"
+pip install --break-system-packages \
+    python-can \
+    cantools \
+    gpiozero
 
 echo "==> Creating user: $USERNAME"
 if ! id "$USERNAME" &>/dev/null; then
     useradd -m -G wheel,video,audio,input -s /bin/bash "$USERNAME"
-    echo "-------------------------------------------------------------"
-    echo "  Set password for $USERNAME:"
+    echo "Set password for $USERNAME:"
     passwd "$USERNAME"
-    echo "-------------------------------------------------------------"
 else
     echo "  User $USERNAME already exists, skipping"
 fi
@@ -85,17 +93,26 @@ EOF
 chmod +x /home/$USERNAME/.xinitrc
 chown $USERNAME:$USERNAME /home/$USERNAME/.xinitrc
 
-echo "==> Enabling SPI"
-if ! grep -q "dtparam=spi=on" /boot/config.txt; then
-    echo "dtparam=spi=on" >> /boot/config.txt
-fi
+echo "==> Writing .bash_profile for $USERNAME"
+cat > /home/$USERNAME/.bash_profile << 'EOF'
+[[ -f ~/.bashrc ]] && source ~/.bashrc
+[[ -z $DISPLAY && $XDG_VTNR -eq 1 ]] && exec startx
+EOF
+chown $USERNAME:$USERNAME /home/$USERNAME/.bash_profile
 
-echo "==> Adding MCP2515 overlay placeholder"
-if ! grep -q "mcp2515-can0" /boot/config.txt; then
-    echo "" >> /boot/config.txt
-    echo "# TODO: check crystal on your MCP2515 module and set oscillator to 8000000 or 16000000" >> /boot/config.txt
-    echo "#dtoverlay=mcp2515-can0,oscillator=FIXME,interrupt=25" >> /boot/config.txt
-fi
+echo "==> Writing .bashrc for $USERNAME"
+cat > /home/$USERNAME/.bashrc << 'EOF'
+PS1='\[\e[34m\]\u@\h\[\e[0m\]:\[\e[36m\]\w\[\e[0m\]\$ '
+alias ls='ls --color=auto'
+alias ll='ls -lah --color=auto'
+alias gs='git status'
+alias gd='git diff'
+alias canup='sudo ip link set can0 up type can bitrate 500000'
+alias candown='sudo ip link set can0 down'
+alias canlisten='candump can0'
+alias canlog='candump -l can0'
+EOF
+chown $USERNAME:$USERNAME /home/$USERNAME/.bashrc
 
 echo "==> Configuring systemd-networkd for can0"
 cat > /etc/systemd/network/can0.network << 'EOF'
@@ -107,13 +124,8 @@ BitRate=500000
 EOF
 
 echo "==> Enabling services"
-systemctl enable redis
-systemctl enable pigpiod
+systemctl enable valkey
 systemctl enable systemd-networkd
+systemctl enable pigpiod 2>/dev/null || true
 
-echo "==> Copying user setup script to $USERNAME home directory"
-cp "$(dirname "$0")/setup-user.sh" /home/$USERNAME/setup-user.sh
-chmod +x /home/$USERNAME/setup-user.sh
-chown $USERNAME:$USERNAME /home/$USERNAME/setup-user.sh
-
-echo "==> Root setup complete — log in as $USERNAME and run ~/setup-user.sh"
+echo "==> Root setup complete — log in as $USERNAME and run ~/usersetup.sh"
