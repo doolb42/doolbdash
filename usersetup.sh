@@ -25,6 +25,7 @@ sudo systemctl enable pigpiod
 sudo systemctl start pigpiod
 
 echo "==> Verifying Python dependencies"
+python -m pip install cantools python-can gpiozero redis
 python -c "import can; import cantools; import gpiozero; import redis; print('All Python imports OK')"
 
 echo "==> Creating project directory structure"
