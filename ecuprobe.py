@@ -71,7 +71,7 @@ parser.add_argument("--dids", nargs="+", type=lambda x: int(x, 16),
                     default=[0x202, 0x204, 0x018, 0x020, 0x030,
                              0x200, 0x201, 0x203, 0x205, 0x206, 0x207],
                     help="DID list to query per ECU (hex, space-separated)")
-parser.add_argument("--timeout",    "-t", type=float, default=1.0,
+parser.add_argument("--timeout",    "-t", type=float, default=0.3,
                     help="ISO-TP response timeout per request (seconds)")
 parser.add_argument("--services", nargs="+", type=lambda x: int(x, 16),
                     default=[0x22, 0x2E, 0x31],
@@ -235,19 +235,21 @@ def isotp_request(bus: can.BusABC, req_addr: int, service: int,
             txid=req_addr,
             rxid=resp_addr,
         )
-        stack = isotp.CanStack(bus=bus, address=addr,
-                               params={"timeout": timeout})
-        stack.send(payload)
+        stack = isotp.CanStack(bus=bus, address=addr, params={'blocking_send': True})
+        stack.start()
+        try:
+            stack.send(payload, send_timeout=timeout)   # blocking, raises BlockingSendFailure on timeout
+            data = stack.recv(block=True, timeout=timeout)
+            return data
+        finally:
+            try:
+                stack.stop()
+            except Exception:
+                pass
 
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            stack.process()
-            if stack.available():
-                return stack.recv()
-            time.sleep(0.005)
-
+    except isotp.BlockingSendFailure:
+        log.debug(f"ISO-TP send failed (ECU 0x{req_addr:X}, SVC 0x{service:X}, DID 0x{did:X})")
         return None
-
     except Exception as e:
         log.warning(f"ISO-TP error (ECU 0x{req_addr:X}, SVC 0x{service:X}, DID 0x{did:X}): {e}")
         return None
@@ -327,7 +329,7 @@ def main() -> None:
     found_ecus: list[ECU] = []
 
     try:
-        bus = can.interface.Bus(channel=INTERFACE, bustype="socketcan")
+        bus = can.interface.Bus(channel=INTERFACE, interface="socketcan")
         log.info(f"Shared CAN bus opened on {INTERFACE}")
     except Exception as e:
         log.error(f"Failed to open CAN bus on {INTERFACE}: {e}")
