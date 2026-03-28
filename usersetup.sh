@@ -6,13 +6,15 @@ set -e
 
 USERNAME="doolb"
 
-echo "==> Installing yay"
-cd /tmp
-git clone https://aur.archlinux.org/yay.git
-cd yay
-makepkg -si --noconfirm
-cd ~
-rm -rf /tmp/yay
+if ! command -v yay &> /dev/null; then
+    echo "==> Installing yay"
+    cd /tmp
+    git clone https://aur.archlinux.org/yay.git
+    cd yay
+    makepkg -si --noconfirm
+    cd ~
+    rm -rf /tmp/yay
+fi
 
 echo "==> Installing AUR packages"
 yay -S --noconfirm \
