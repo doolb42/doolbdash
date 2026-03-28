@@ -25,8 +25,19 @@ sudo systemctl enable pigpiod
 sudo systemctl start pigpiod
 
 echo "==> Verifying Python dependencies"
-python -m pip install cantools python-can gpiozero redis
-python -c "import can; import cantools; import gpiozero; import redis; print('All Python imports OK')"
+
+VENV="$HOME/.venv"
+PYTHON="$VENV/bin/python"
+
+if [ ! -d "$VENV" ]; then
+    echo "==> Creating virtual environment"
+    python -m venv "$VENV"
+fi
+
+"$PYTHON" -m pip install --upgrade pip cantools python-can gpiozero redis
+
+"$PYTHON" -c "import can; import cantools; import gpiozero; import redis; print('All Python imports OK')"
+
 
 echo "==> Creating project directory structure"
 mkdir -p ~/tuccaneer/{tuccaneer,dbc,config,systemd,docs,tests}
@@ -246,7 +257,7 @@ drive_mode = "normal"
 EOF
 
 echo "==> Writing tucCANeer systemd service files"
-cat > ~/tuccaneer/systemd/tuccaneer-reader.service << 'EOF'
+cat > ~/tuccaneer/systemd/tuccaneer-reader.service << EOF
 [Unit]
 Description=tucCANeer CAN Reader
 After=network.target can0.service
@@ -255,7 +266,7 @@ Requires=redis.service
 [Service]
 Type=simple
 User=doolb
-ExecStart=/usr/bin/python /home/doolb/tuccaneer/tuccaneer/can_reader.py
+ExecStart=$PYTHON /home/doolb/tuccaneer/tuccaneer/can_reader.py
 Restart=on-failure
 RestartSec=5
 
@@ -263,7 +274,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-cat > ~/tuccaneer/systemd/tuccaneer-writer.service << 'EOF'
+cat > ~/tuccaneer/systemd/tuccaneer-writer.service << EOF
 [Unit]
 Description=tucCANeer CAN Writer
 After=network.target can0.service
@@ -272,7 +283,7 @@ Requires=redis.service
 [Service]
 Type=simple
 User=doolb
-ExecStart=/usr/bin/python /home/doolb/tuccaneer/tuccaneer/can_writer.py
+ExecStart=$PYTHON /home/doolb/tuccaneer/tuccaneer/can_writer.py
 Restart=on-failure
 RestartSec=5
 
@@ -280,7 +291,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-cat > ~/tuccaneer/systemd/tuccaneer-startup.service << 'EOF'
+cat > ~/tuccaneer/systemd/tuccaneer-startup.service << EOF
 [Unit]
 Description=tucCANeer Startup Sequence
 After=tuccaneer-reader.service tuccaneer-writer.service
@@ -289,14 +300,14 @@ Requires=tuccaneer-reader.service tuccaneer-writer.service
 [Service]
 Type=oneshot
 User=doolb
-ExecStart=/usr/bin/python /home/doolb/tuccaneer/tuccaneer/startup_sequence.py
+ExecStart=$PYTHON /home/doolb/tuccaneer/tuccaneer/startup_sequence.py
 RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-cat > ~/doolbdash/systemd/doolbdash-gpio.service << 'EOF'
+cat > ~/doolbdash/systemd/doolbdash-gpio.service << EOF
 [Unit]
 Description=doolbdash GPIO Handler
 After=tuccaneer-startup.service
@@ -305,7 +316,7 @@ Requires=tuccaneer-startup.service
 [Service]
 Type=simple
 User=doolb
-ExecStart=/usr/bin/python /home/doolb/doolbdash/gpio/handler.py
+ExecStart=$PYTHON /home/doolb/doolbdash/gpio/handler.py
 Restart=on-failure
 RestartSec=5
 
@@ -313,7 +324,7 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-cat > ~/doolbdash/systemd/doolbdash-display.service << 'EOF'
+cat > ~/doolbdash/systemd/doolbdash-display.service << EOF
 [Unit]
 Description=doolbdash Display
 After=tuccaneer-startup.service
@@ -338,5 +349,11 @@ sudo ln -sf /home/$USERNAME/tuccaneer/systemd/tuccaneer-startup.service /etc/sys
 sudo ln -sf /home/$USERNAME/doolbdash/systemd/doolbdash-gpio.service    /etc/systemd/system/
 sudo ln -sf /home/$USERNAME/doolbdash/systemd/doolbdash-display.service /etc/systemd/system/
 sudo systemctl daemon-reload
+
+sudo systemctl enable tuccaneer-reader.service
+sudo systemctl enable tuccaneer-writer.service
+sudo systemctl enable tuccaneer-startup.service
+sudo systemctl enable doolbdash-gpio.service
+sudo systemctl enable doolbdash-display.service
 
 echo "==> User setup complete — reboot to verify"
