@@ -236,7 +236,7 @@ def isotp_request(bus: can.BusABC, req_addr: int, service: int,
             rxid=resp_addr,
         )
         stack = isotp.CanStack(bus=bus, address=addr,
-                               params={"rx_timeout": timeout})
+                               params={"timeout": timeout})
         stack.send(payload)
 
         deadline = time.time() + timeout
@@ -335,7 +335,7 @@ def main() -> None:
 
     try:
         # ── Step 3: Discover and probe ECUs
-        for addr in range(0x700, 0x800):
+        for addr in range(0x700, 0x7F8):  # cap at 0x7F7 — response addr is req+0x08, must stay < 0x7FF
             ecu_name = KNOWN_ECUS.get(addr, f"ECU_0x{addr:X}")
             log.debug(f"Pinging 0x{addr:X} ({ecu_name})...")
 
