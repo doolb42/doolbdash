@@ -42,6 +42,8 @@ from pathlib import Path
 
 # Scapy for live capture / pcap writing
 from scapy.all import AsyncSniffer
+from scapy.layers.can import CAN
+from scapy.utils import PcapWriter
 from scapy.utils import wrpcap
 
 # python-can + can-isotp for proper ISO-TP with flow control
@@ -238,9 +240,44 @@ def isotp_request(bus: can.BusABC, req_addr: int, service: int,
         stack = isotp.CanStack(bus=bus, address=addr, params={'blocking_send': True})
         stack.start()
         try:
-            stack.send(payload, send_timeout=timeout)   # blocking, raises BlockingSendFailure on timeout
-            data = stack.recv(block=True, timeout=timeout)
-            return data
+            MAX_RETRIES = 3
+            BACKOFF = 0.05  # seconds
+
+            send_ok = False
+
+            for attempt in range(MAX_RETRIES):
+                try:
+                    stack.send(payload, send_timeout=timeout)
+                    send_ok = True
+                    break
+
+                except can.CanOperationError as e:
+                    # ENOBUFS (105) = kernel TX buffer full
+                    if getattr(e, "errno", None) == 105:
+                        log.debug(
+                            f"TX buffer full (ECU 0x{req_addr:X}) "
+                            f"attempt {attempt+1}/{MAX_RETRIES}"
+                        )
+                        time.sleep(BACKOFF * (attempt + 1))
+                    else:
+                        log.warning(f"CAN send error (ECU 0x{req_addr:X}): {e}")
+                        return None
+
+                except Exception as e:
+                    log.warning(f"Unexpected send error (ECU 0x{req_addr:X}): {e}")
+                    return None
+
+            if not send_ok:
+                log.debug(f"TX failed after retries (ECU 0x{req_addr:X})")
+                return None
+
+            # Only receive if send succeeded
+            try:
+                data = stack.recv(block=True, timeout=timeout)
+                return data
+            except Exception as e:
+                log.debug(f"RX timeout/error (ECU 0x{req_addr:X}): {e}")
+                return None
         finally:
             try:
                 stack.stop()
@@ -269,6 +306,7 @@ class ECU:
         for svc in services:
             for did in did_list:
                 raw = isotp_request(bus, self.address, svc, did, timeout)
+                time.sleep(0.005)
                 if raw:
                     decoded = decode_did(did, raw)
                     key = f"0x{svc:02X}_0x{did:04X}"
@@ -292,18 +330,27 @@ class ECU:
 # Live CAN Capture (Scapy AsyncSniffer -> .pcap)
 # ──────────────────────────────────────────────
 def live_capture(iface: str, duration: int, out_dir: Path, ts: str) -> None:
-    """Capture raw CAN traffic for {duration}s and save as .pcap."""
     log.info(f"Starting live CAN capture on {iface} for {duration}s...")
-    sniffer = AsyncSniffer(iface=iface, store=True)
+
+    pcap_file = out_dir / f"live_can_{ts}.pcap"
+    writer = PcapWriter(str(pcap_file), append=False, sync=True)
+
+    def handler(pkt):
+        if pkt.haslayer(CAN):
+            writer.write(pkt)
+
+    sniffer = AsyncSniffer(
+        iface=iface,
+        store=False,
+        prn=handler
+    )
+
     sniffer.start()
     time.sleep(duration)
-    packets = sniffer.stop()
-    if packets:
-        pcap_file = out_dir / f"live_can_{ts}.pcap"
-        wrpcap(str(pcap_file), packets)
-        log.info(f"Live capture saved -> {pcap_file}  ({len(packets)} frames)")
-    else:
-        log.warning("Live capture: no frames received.")
+    sniffer.stop()
+
+    writer.close()
+    log.info(f"Live capture saved -> {pcap_file}")
 
 # ──────────────────────────────────────────────
 # Main
@@ -338,6 +385,7 @@ def main() -> None:
     try:
         # ── Step 3: Discover and probe ECUs
         for addr in range(0x700, 0x7F8):  # cap at 0x7F7 — response addr is req+0x08, must stay < 0x7FF
+            time.sleep(0.02)
             ecu_name = KNOWN_ECUS.get(addr, f"ECU_0x{addr:X}")
             log.debug(f"Pinging 0x{addr:X} ({ecu_name})...")
 
